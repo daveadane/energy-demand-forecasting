@@ -218,28 +218,33 @@ with tab1:
     with col_ctrl:
         st.subheader("Settings")
         model_choice = st.selectbox("Model", ["LightGBM", "LSTM", "Both"])
+
+        # Initialize defaults
+        if 'sel_start' not in st.session_state:
+            st.session_state['sel_start'] = pd.Timestamp("2018-01-08").date()
+        if 'sel_end' not in st.session_state:
+            st.session_state['sel_end'] = pd.Timestamp("2018-01-14").date()
+
+        def set_dates(start, end):
+            st.session_state['sel_start'] = pd.Timestamp(start).date()
+            st.session_state['sel_end']   = pd.Timestamp(end).date()
+
         st.markdown("**Select date range (2018)**")
         start_date = st.date_input(
-            "Start", value=pd.Timestamp("2018-01-08"),
+            "Start", key='sel_start',
             min_value=pd.Timestamp("2018-01-08"),
-            max_value=pd.Timestamp("2018-08-01")
+            max_value=pd.Timestamp("2018-12-24")
         )
         end_date = st.date_input(
-            "End", value=pd.Timestamp("2018-01-14"),
+            "End", key='sel_end',
             min_value=pd.Timestamp("2018-01-09"),
-            max_value=pd.Timestamp("2018-08-03")
+            max_value=pd.Timestamp("2018-12-25")
         )
         st.markdown("---")
         st.markdown("**Quick select**")
-        if st.button("❄️ Winter Peak (Jan)"):
-            st.session_state['start'] = pd.Timestamp("2018-01-08").date()
-            st.session_state['end']   = pd.Timestamp("2018-01-14").date()
-        if st.button("☀️ Summer Peak (Jul)"):
-            st.session_state['start'] = pd.Timestamp("2018-07-09").date()
-            st.session_state['end']   = pd.Timestamp("2018-07-15").date()
-        if st.button("🎄 Holiday Week (Dec)"):
-            st.session_state['start'] = pd.Timestamp("2018-12-17").date()
-            st.session_state['end']   = pd.Timestamp("2018-12-25").date()
+        st.button("❄️ Winter Peak (Jan)",  on_click=set_dates, args=("2018-01-08", "2018-01-14"))
+        st.button("☀️ Summer Peak (Jul)",  on_click=set_dates, args=("2018-07-09", "2018-07-15"))
+        st.button("🎄 Holiday Week (Dec)", on_click=set_dates, args=("2018-12-17", "2018-12-25"))
 
     with col_main:
         s = str(start_date)

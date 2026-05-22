@@ -31,7 +31,7 @@ st.markdown("""
 
 BASE_DIR   = Path(__file__).parent.parent
 MODELS_DIR = BASE_DIR / "models"
-DATA_PATH  = BASE_DIR / "data" / "PJME_hourly.csv"
+DATA_DIR   = BASE_DIR / "data"
 SEQ_LEN    = 168
 
 # LSTM model definition (must match forecasting.ipynb)
@@ -48,7 +48,7 @@ class QuantileLSTM(nn.Module):
         return self.head(self.dropout(out[:, -1, :]))
 
 # Feature engineering
-US_HOLIDAYS = holidays.US(years=range(2001, 2020))
+US_HOLIDAYS = holidays.US(years=range(2005, 2026))
 
 def build_features(df):
     d = df.copy()
@@ -78,13 +78,28 @@ def build_features(df):
 # Load data
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATA_PATH)
-    df.columns = [c.strip() for c in df.columns]
-    date_col = [c for c in df.columns if 'date' in c.lower() or 'time' in c.lower()][0]
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.set_index(date_col).sort_index()
-    df.columns = ['demand_mw']
-    return build_features(df)
+    import glob
+    # Kaggle historical DOM (2005-2018)
+    kaggle = pd.read_csv(DATA_DIR / 'DOM_hourly.csv')
+    kaggle.columns = ['Datetime', 'MW']
+    kaggle['Datetime'] = pd.to_datetime(kaggle['Datetime'])
+
+    # PJM yearly files (2018-2025)
+    files = sorted(glob.glob(str(DATA_DIR / 'hrl_load_metered_*.csv')))
+    frames = []
+    for f in files:
+        tmp = pd.read_csv(f, usecols=['datetime_beginning_ept', 'mw'])
+        tmp.columns = ['Datetime', 'MW']
+        tmp['Datetime'] = pd.to_datetime(tmp['Datetime'])
+        frames.append(tmp)
+    pjm = pd.concat(frames)
+
+    combined = pd.concat([kaggle, pjm])
+    combined = combined.drop_duplicates(subset='Datetime').sort_values('Datetime')
+    combined = combined.set_index('Datetime')
+    combined.columns = ['demand_mw']
+    combined.index.name = 'Datetime'
+    return build_features(combined)
 
 # Load models
 @st.cache_resource
@@ -113,8 +128,8 @@ def get_predictions():
     df = load_data()
     lgbm, lstm, feat_scaler, target_scaler, feature_cols = load_models()
 
-    train = df[df.index.year < 2018]
-    test  = df[df.index.year == 2018]
+    train = df[df.index.year < 2024]
+    test  = df[df.index.year == 2024]
     X_test = test[feature_cols]
 
     # LightGBM
@@ -202,7 +217,7 @@ def forecast_chart(df_slice, prefix, color, title):
 # MAIN APP
 # ========================
 st.title("⚡ Probabilistic Energy Demand Forecasting")
-st.markdown("**PJM East (PJME)** hourly energy consumption · 2001-2018 · XGBoost · LightGBM · LSTM")
+st.markdown("**Dominion (DOM)** hourly energy consumption · Virginia/DC region · 2005-2025 · XGBoost · LightGBM · LSTM")
 st.divider()
 
 with st.spinner("Loading data and models..."):
@@ -221,30 +236,30 @@ with tab1:
 
         # Initialize defaults
         if 'sel_start' not in st.session_state:
-            st.session_state['sel_start'] = pd.Timestamp("2018-01-08").date()
+            st.session_state['sel_start'] = pd.Timestamp("2024-01-08").date()
         if 'sel_end' not in st.session_state:
-            st.session_state['sel_end'] = pd.Timestamp("2018-01-14").date()
+            st.session_state['sel_end'] = pd.Timestamp("2024-01-14").date()
 
         def set_dates(start, end):
             st.session_state['sel_start'] = pd.Timestamp(start).date()
             st.session_state['sel_end']   = pd.Timestamp(end).date()
 
-        st.markdown("**Select date range (2018)**")
+        st.markdown("**Select date range (2024)**")
         start_date = st.date_input(
             "Start", key='sel_start',
-            min_value=pd.Timestamp("2018-01-08"),
-            max_value=pd.Timestamp("2018-12-24")
+            min_value=pd.Timestamp("2024-01-08"),
+            max_value=pd.Timestamp("2024-12-24")
         )
         end_date = st.date_input(
             "End", key='sel_end',
-            min_value=pd.Timestamp("2018-01-09"),
-            max_value=pd.Timestamp("2018-12-25")
+            min_value=pd.Timestamp("2024-01-09"),
+            max_value=pd.Timestamp("2024-12-25")
         )
         st.markdown("---")
         st.markdown("**Quick select**")
-        st.button("❄️ Winter Peak (Jan)",  on_click=set_dates, args=("2018-01-08", "2018-01-14"))
-        st.button("☀️ Summer Peak (Jul)",  on_click=set_dates, args=("2018-07-09", "2018-07-15"))
-        st.button("🎄 Holiday Week (Dec)", on_click=set_dates, args=("2018-12-17", "2018-12-25"))
+        st.button("❄️ Winter Peak (Jan)",  on_click=set_dates, args=("2024-01-08", "2024-01-14"))
+        st.button("☀️ Summer Peak (Jul)",  on_click=set_dates, args=("2024-07-08", "2024-07-14"))
+        st.button("🎄 Holiday Week (Dec)", on_click=set_dates, args=("2024-12-17", "2024-12-25"))
 
     with col_main:
         s = str(start_date)
@@ -275,10 +290,10 @@ with tab1:
 
 # Tab 2: Model Comparison
 with tab2:
-    st.subheader("Full 2018 Test Set — All Models")
+    st.subheader("Full 2024 Test Set — All Models")
 
     metrics_all = {
-        'XGBoost*':  {'MAE (MW)': 340.6, 'Avg Pinball': 111.1, 'Coverage %': 68.6, 'Interval Width (MW)': 952.2},
+        'XGBoost*':  {'MAE (MW)': 201.9, 'Avg Pinball': 66.2, 'Coverage %': 76.6, 'Interval Width (MW)': 586.4},
         'LightGBM':  compute_metrics(pred_df, 'lgbm'),
         'LSTM':      compute_metrics(pred_df, 'lstm'),
     }
@@ -310,8 +325,8 @@ with tab2:
     st.plotly_chart(fig_cmp, use_container_width=True)
 
     # Side-by-side comparison for summer week
-    st.subheader("Prediction Intervals — Summer Peak Week (Jul 9-15)")
-    zoom = pred_df.loc['2018-07-09':'2018-07-15']
+    st.subheader("Prediction Intervals — Summer Peak Week (Jul 8-14)")
+    zoom = pred_df.loc['2024-07-08':'2024-07-14']
     fig3 = make_subplots(rows=2, cols=1,
                           subplot_titles=('LightGBM', 'LSTM'),
                           shared_xaxes=True, vertical_spacing=0.12)
@@ -337,7 +352,7 @@ with tab2:
 
 # Tab 3: EDA
 with tab3:
-    st.subheader("Exploratory Data Analysis — PJME 2001-2018")
+    st.subheader("Exploratory Data Analysis — DOM 2005-2025")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -375,7 +390,7 @@ with tab3:
                         template='plotly_dark', color_discrete_sequence=['#a6e3a1'])
         st.plotly_chart(fig_y, use_container_width=True)
 
-    st.subheader("Full Time Series 2001-2018")
+    st.subheader("Full Time Series 2005-2025")
     daily_avg = df['demand_mw'].resample('D').mean()
     fig_full = px.line(daily_avg, template='plotly_dark',
                        labels={'value': 'Daily Avg Demand (MW)', 'Datetime': ''},

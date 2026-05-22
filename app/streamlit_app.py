@@ -302,7 +302,7 @@ with tab2:
     st.subheader("Full 2025 Test Set — All Models")
 
     metrics_all = {
-        'XGBoost*':  {'MAE (MW)': 201.9, 'Avg Pinball': 66.2, 'Coverage %': 76.6, 'Interval Width (MW)': 586.4},
+        'XGBoost*':  {'MAE (MW)': 224.3, 'Avg Pinball': 73.0, 'Coverage %': 79.6, 'Interval Width (MW)': 687.0},
         'LightGBM':  compute_metrics(pred_df, 'lgbm'),
         'LSTM':      compute_metrics(pred_df, 'lstm'),
     }

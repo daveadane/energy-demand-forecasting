@@ -48,7 +48,7 @@ class QuantileLSTM(nn.Module):
         return self.head(self.dropout(out[:, -1, :]))
 
 # Feature engineering
-US_HOLIDAYS = holidays.US(years=range(2005, 2026))
+US_HOLIDAYS = holidays.US(years=range(2005, 2027))
 
 def build_features(df):
     d = df.copy()
@@ -128,8 +128,8 @@ def get_predictions():
     df = load_data()
     lgbm, lstm, feat_scaler, target_scaler, feature_cols = load_models()
 
-    train = df[df.index.year < 2024]
-    test  = df[df.index.year == 2024]
+    train = df[df.index.year < 2025]
+    test  = df[df.index.year == 2025]
     X_test = test[feature_cols]
 
     # LightGBM
@@ -245,30 +245,30 @@ with tab1:
 
         # Initialize defaults
         if 'sel_start' not in st.session_state:
-            st.session_state['sel_start'] = pd.Timestamp("2024-01-08").date()
+            st.session_state['sel_start'] = pd.Timestamp("2025-01-06").date()
         if 'sel_end' not in st.session_state:
-            st.session_state['sel_end'] = pd.Timestamp("2024-01-14").date()
+            st.session_state['sel_end'] = pd.Timestamp("2025-01-12").date()
 
         def set_dates(start, end):
             st.session_state['sel_start'] = pd.Timestamp(start).date()
             st.session_state['sel_end']   = pd.Timestamp(end).date()
 
-        st.markdown("**Select date range (2024)**")
+        st.markdown("**Select date range (2025)**")
         start_date = st.date_input(
             "Start", key='sel_start',
-            min_value=pd.Timestamp("2024-01-08"),
-            max_value=pd.Timestamp("2024-12-24")
+            min_value=pd.Timestamp("2025-01-06"),
+            max_value=pd.Timestamp("2025-12-24")
         )
         end_date = st.date_input(
             "End", key='sel_end',
-            min_value=pd.Timestamp("2024-01-09"),
-            max_value=pd.Timestamp("2024-12-25")
+            min_value=pd.Timestamp("2025-01-07"),
+            max_value=pd.Timestamp("2025-12-25")
         )
         st.markdown("---")
         st.markdown("**Quick select**")
-        st.button("❄️ Winter Peak (Jan)",  on_click=set_dates, args=("2024-01-08", "2024-01-14"))
-        st.button("☀️ Summer Peak (Jul)",  on_click=set_dates, args=("2024-07-08", "2024-07-14"))
-        st.button("🎄 Holiday Week (Dec)", on_click=set_dates, args=("2024-12-17", "2024-12-25"))
+        st.button("❄️ Winter Peak (Jan)",  on_click=set_dates, args=("2025-01-06", "2025-01-12"))
+        st.button("☀️ Summer Peak (Jul)",  on_click=set_dates, args=("2025-07-07", "2025-07-13"))
+        st.button("🎄 Holiday Week (Dec)", on_click=set_dates, args=("2025-12-17", "2025-12-25"))
 
     with col_main:
         s = str(start_date)
@@ -299,7 +299,7 @@ with tab1:
 
 # Tab 2: Model Comparison
 with tab2:
-    st.subheader("Full 2024 Test Set — All Models")
+    st.subheader("Full 2025 Test Set — All Models")
 
     metrics_all = {
         'XGBoost*':  {'MAE (MW)': 201.9, 'Avg Pinball': 66.2, 'Coverage %': 76.6, 'Interval Width (MW)': 586.4},
@@ -334,8 +334,8 @@ with tab2:
     st.plotly_chart(fig_cmp, use_container_width=True)
 
     # Side-by-side comparison for summer week
-    st.subheader("Prediction Intervals — Summer Peak Week (Jul 8-14)")
-    zoom = pred_df.loc['2024-07-08':'2024-07-14']
+    st.subheader("Prediction Intervals — Summer Peak Week (Jul 7-13)")
+    zoom = pred_df.loc['2025-07-07':'2025-07-13']
     fig3 = make_subplots(rows=2, cols=1,
                           subplot_titles=('LightGBM', 'LSTM'),
                           shared_xaxes=True, vertical_spacing=0.12)

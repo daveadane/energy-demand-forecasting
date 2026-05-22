@@ -193,9 +193,10 @@ def _build_future_row(ts, buf, feature_cols):
     return [row[c] for c in feature_cols]
 
 @st.cache_data
-def future_forecast(year):
-    """Recursively predict hourly demand for the full target year using LightGBM.
-    Seeds from last 200 known hours; feeds Q50 back as lag for each subsequent step."""
+def future_forecast_5yr():
+    """Recursively predict 2026-01-01 through 2030-12-31 using LightGBM (43,800 steps).
+    Seeds from last 200 known hours; Q50 feeds back as lag for every subsequent step.
+    Cached — computed once, instant to slice thereafter."""
     df_full = load_data()
     lgbm_m, _, _, _, feature_cols = load_models()
 
@@ -203,11 +204,9 @@ def future_forecast(year):
     last_ts = df_full.index[-1]
     future_idx = pd.date_range(
         start=last_ts + pd.Timedelta(hours=1),
-        end=pd.Timestamp(f"{year}-12-31 23:00"),
+        end=pd.Timestamp("2030-12-31 23:00"),
         freq='h'
     )
-    if len(future_idx) == 0:
-        return pd.DataFrame(columns=['q10', 'q50', 'q90'])
 
     q10s, q50s, q90s = [], [], []
     for ts in future_idx:
@@ -462,66 +461,98 @@ with tab3:
 
 # Tab 4: Future Forecast
 with tab4:
-    import calendar as cal_mod
-    MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-
-    st.subheader("Future Demand Forecast (2026+)")
+    st.subheader("Future Demand Forecast — 2026 to 2030")
     st.info(
-        "**How it works:** LightGBM uses recursive (auto-regressive) prediction — each "
-        "hour's Q50 output is fed back as the lag input for the next step. "
-        "Seasonal patterns (hour-of-day, day-of-week, month, holidays) learned from "
-        "2005–2023 training data drive the forecast. Accuracy degrades with horizon distance."
+        "**Recursive forecasting:** LightGBM predicts one hour at a time — each Q50 output "
+        "feeds back as the lag input for the next step. Seasonal patterns (hour-of-day, "
+        "day-of-week, month, holidays) from 2005–2023 training data drive the projection. "
+        "The full 5-year window (43,800 steps) is computed once and cached."
     )
+
+    # Date range state
+    if 'f_start' not in st.session_state:
+        st.session_state['f_start'] = pd.Timestamp("2026-06-01").date()
+    if 'f_end' not in st.session_state:
+        st.session_state['f_end'] = pd.Timestamp("2026-06-30").date()
+
+    def set_future_dates(start, end):
+        st.session_state['f_start'] = pd.Timestamp(start).date()
+        st.session_state['f_end']   = pd.Timestamp(end).date()
 
     col_f1, col_f2 = st.columns(2)
     with col_f1:
-        f_year = st.selectbox("Year", [2026, 2027], key="f_year")
+        f_start = st.date_input(
+            "From", key='f_start',
+            min_value=pd.Timestamp("2026-01-01").date(),
+            max_value=pd.Timestamp("2030-12-31").date(),
+        )
     with col_f2:
-        f_month = st.selectbox(
-            "Month", range(1, 13), index=5, key="f_month",
-            format_func=lambda x: MONTH_NAMES[x - 1]
+        f_end = st.date_input(
+            "To", key='f_end',
+            min_value=pd.Timestamp("2026-01-01").date(),
+            max_value=pd.Timestamp("2030-12-31").date(),
         )
 
+    st.markdown("**Quick select**")
+    qs1, qs2, qs3, qs4, qs5 = st.columns(5)
+    qs1.button("☀️ Summer 2026",  on_click=set_future_dates, args=("2026-07-01", "2026-07-31"))
+    qs2.button("❄️ Winter 2027",  on_click=set_future_dates, args=("2027-01-01", "2027-01-31"))
+    qs3.button("📅 Full 2027",    on_click=set_future_dates, args=("2027-01-01", "2027-12-31"))
+    qs4.button("☀️ Summer 2028",  on_click=set_future_dates, args=("2028-07-01", "2028-07-31"))
+    qs5.button("📅 Full 2030",    on_click=set_future_dates, args=("2030-01-01", "2030-12-31"))
+
     if st.button("▶ Run Forecast", type="primary", key="btn_future"):
-        with st.spinner(f"Computing full {f_year} recursive forecast (~8,760 steps, cached after first run)..."):
-            fcast = future_forecast(f_year)
-
-        start_str = f"{f_year}-{f_month:02d}-01"
-        last_day  = cal_mod.monthrange(f_year, f_month)[1]
-        end_str   = f"{f_year}-{f_month:02d}-{last_day}"
-        month_fc  = fcast.loc[start_str:end_str]
-
-        if month_fc.empty:
-            st.warning("No forecast data for the selected period.")
+        if f_end <= f_start:
+            st.error("'To' date must be after 'From' date.")
         else:
-            fig_f = go.Figure()
-            fig_f.add_trace(go.Scatter(
-                x=month_fc.index, y=month_fc['q90'],
-                line=dict(width=0), showlegend=False, hoverinfo='skip'
-            ))
-            fig_f.add_trace(go.Scatter(
-                x=month_fc.index, y=month_fc['q10'],
-                fill='tonexty', fillcolor='rgba(137,180,250,0.15)',
-                line=dict(width=0), name='80% interval'
-            ))
-            fig_f.add_trace(go.Scatter(
-                x=month_fc.index, y=month_fc['q50'],
-                line=dict(color='rgb(137,180,250)', width=1.5), name='Q50 forecast'
-            ))
-            fig_f.update_layout(
-                title=f'LightGBM Recursive Forecast — {MONTH_NAMES[f_month - 1]} {f_year}',
-                xaxis_title='Date', yaxis_title='Demand (MW)',
-                height=420, template='plotly_dark', hovermode='x unified',
-                legend=dict(orientation='h', y=1.1)
-            )
-            st.plotly_chart(fig_f, use_container_width=True)
+            with st.spinner("Computing 5-year recursive forecast (~43,800 steps). First run takes ~60s — cached instantly after..."):
+                fcast = future_forecast_5yr()
 
-            days_ahead = (month_fc.index[0] - df.index[-1]).days
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Peak Q50",  f"{month_fc['q50'].max():,.0f} MW")
-            c2.metric("Min Q50",   f"{month_fc['q50'].min():,.0f} MW")
-            c3.metric("Avg Interval Width", f"{(month_fc['q90'] - month_fc['q10']).mean():,.0f} MW")
-            st.caption(
-                f"Forecast horizon: ~{days_ahead} days beyond last known data (Dec 2025). "
-                "Intervals reflect seasonal uncertainty from training data, not accumulated prediction error."
-            )
+            window = fcast.loc[str(f_start):str(f_end)]
+
+            if window.empty:
+                st.warning("No forecast data for the selected range.")
+            else:
+                # Auto-resample to daily for wide windows (keeps chart readable)
+                n_days = (f_end - f_start).days
+                if n_days > 60:
+                    plot_df = window.resample('D').agg({'q10': 'min', 'q50': 'mean', 'q90': 'max'})
+                    res_label = "daily avg"
+                else:
+                    plot_df = window
+                    res_label = "hourly"
+
+                fig_f = go.Figure()
+                fig_f.add_trace(go.Scatter(
+                    x=plot_df.index, y=plot_df['q90'],
+                    line=dict(width=0), showlegend=False, hoverinfo='skip'
+                ))
+                fig_f.add_trace(go.Scatter(
+                    x=plot_df.index, y=plot_df['q10'],
+                    fill='tonexty', fillcolor='rgba(137,180,250,0.15)',
+                    line=dict(width=0), name='80% interval'
+                ))
+                fig_f.add_trace(go.Scatter(
+                    x=plot_df.index, y=plot_df['q50'],
+                    line=dict(color='rgb(137,180,250)', width=1.5),
+                    name=f'Q50 forecast ({res_label})'
+                ))
+                fig_f.update_layout(
+                    title=f'LightGBM Recursive Forecast — {f_start} to {f_end}',
+                    xaxis_title='Date', yaxis_title='Demand (MW)',
+                    height=440, template='plotly_dark', hovermode='x unified',
+                    legend=dict(orientation='h', y=1.1)
+                )
+                st.plotly_chart(fig_f, use_container_width=True)
+
+                days_ahead = (window.index[0] - df.index[-1]).days
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Peak Q50",   f"{window['q50'].max():,.0f} MW")
+                c2.metric("Min Q50",    f"{window['q50'].min():,.0f} MW")
+                c3.metric("Avg Width",  f"{(window['q90'] - window['q10']).mean():,.0f} MW")
+                c4.metric("Horizon",    f"{days_ahead} days")
+                st.caption(
+                    f"Seeded from last known data (Dec 2025). "
+                    f"Intervals reflect seasonal uncertainty patterns — not accumulated prediction error. "
+                    f"{'Chart resampled to daily average for readability.' if n_days > 60 else 'Showing hourly resolution.'}"
+                )

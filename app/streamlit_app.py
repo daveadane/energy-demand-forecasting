@@ -165,107 +165,14 @@ def get_predictions():
         'lstm_q10': lstm_q10,  'lstm_q50': lstm_q50,  'lstm_q90': lstm_q90,
     }, index=test.index)
 
-# Recursive future forecasting
-def _build_future_row(ts, buf, feature_cols):
-    row = {
-        'hour':           ts.hour,
-        'dayofweek':      ts.dayofweek,
-        'month':          ts.month,
-        'quarter':        ts.quarter,
-        'dayofyear':      ts.dayofyear,
-        'weekofyear':     ts.isocalendar()[1],
-        'is_weekend':     int(ts.dayofweek in [5, 6]),
-        'is_holiday':     int(ts.normalize() in US_HOLIDAYS),
-        'hour_sin':       np.sin(2 * np.pi * ts.hour / 24),
-        'hour_cos':       np.cos(2 * np.pi * ts.hour / 24),
-        'month_sin':      np.sin(2 * np.pi * ts.month / 12),
-        'month_cos':      np.cos(2 * np.pi * ts.month / 12),
-        'dow_sin':        np.sin(2 * np.pi * ts.dayofweek / 7),
-        'dow_cos':        np.cos(2 * np.pi * ts.dayofweek / 7),
-        'lag_1h':         buf[-1],
-        'lag_24h':        buf[-24],
-        'lag_168h':       buf[-168],
-        'roll_mean_24h':  float(np.mean(buf[-24:])),
-        'roll_std_24h':   float(np.std(buf[-24:])),
-        'roll_mean_168h': float(np.mean(buf[-168:])),
-        'roll_std_168h':  float(np.std(buf[-168:])),
-    }
-    return [row[c] for c in feature_cols]
+
+FORECAST_PATH = DATA_DIR / "future_forecast_5yr.parquet"
 
 @st.cache_data
 def future_forecast_5yr():
-    """Compute 5-year recursive forecast (2026-2030).
-    Time features vectorised up-front; only lag columns update inside the loop.
-    ~3x faster than per-step dict construction. Cached after first run."""
-    df_full = load_data()
-    lgbm_m, _, _, _, feature_cols = load_models()
-
-    SEED = 200
-    last_ts    = df_full.index[-1]
-    future_idx = pd.date_range(
-        start=last_ts + pd.Timedelta(hours=1),
-        end=pd.Timestamp("2030-12-31 23:00"),
-        freq='h'
-    )
-    n = len(future_idx)
-
-    # Vectorise all time-based features at once (no per-step dict)
-    hours  = future_idx.hour.values.astype(np.float64)
-    dows   = future_idx.dayofweek.values.astype(np.float64)
-    months = future_idx.month.values.astype(np.float64)
-    time_cols = {
-        'hour':        hours,
-        'dayofweek':   dows,
-        'month':       months,
-        'quarter':     future_idx.quarter.values.astype(np.float64),
-        'dayofyear':   future_idx.dayofyear.values.astype(np.float64),
-        'weekofyear':  future_idx.isocalendar().week.astype(int).values.astype(np.float64),
-        'is_weekend':  (dows >= 5).astype(np.float64),
-        'is_holiday':  np.array([int(t.normalize() in US_HOLIDAYS) for t in future_idx], dtype=np.float64),
-        'hour_sin':    np.sin(2 * np.pi * hours  / 24),
-        'hour_cos':    np.cos(2 * np.pi * hours  / 24),
-        'month_sin':   np.sin(2 * np.pi * months / 12),
-        'month_cos':   np.cos(2 * np.pi * months / 12),
-        'dow_sin':     np.sin(2 * np.pi * dows   / 7),
-        'dow_cos':     np.cos(2 * np.pi * dows   / 7),
-    }
-
-    fi = {f: i for i, f in enumerate(feature_cols)}
-
-    # Pre-fill time columns into the feature matrix
-    X_mat = np.zeros((n, len(feature_cols)), dtype=np.float64)
-    for name, arr in time_cols.items():
-        X_mat[:, fi[name]] = arr
-
-    # Preallocated buffer: seed + predictions (zero-copy sliding window)
-    ext = np.empty(SEED + n, dtype=np.float64)
-    ext[:SEED] = df_full['demand_mw'].values[-SEED:]
-
-    q10s = np.empty(n, dtype=np.float64)
-    q50s = np.empty(n, dtype=np.float64)
-    q90s = np.empty(n, dtype=np.float64)
-
-    i_l1    = fi['lag_1h'];    i_l24   = fi['lag_24h'];   i_l168  = fi['lag_168h']
-    i_rm24  = fi['roll_mean_24h'];  i_rs24  = fi['roll_std_24h']
-    i_rm168 = fi['roll_mean_168h']; i_rs168 = fi['roll_std_168h']
-
-    for i in range(n):
-        w = ext[i: i + SEED]           # 200-element view, no copy
-        X_mat[i, i_l1]    = w[-1]
-        X_mat[i, i_l24]   = w[-24]
-        X_mat[i, i_l168]  = w[-168]
-        X_mat[i, i_rm24]  = w[-24:].mean()
-        X_mat[i, i_rs24]  = w[-24:].std()
-        X_mat[i, i_rm168] = w[-168:].mean()
-        X_mat[i, i_rs168] = w[-168:].std()
-
-        row = X_mat[i: i + 1]
-        q50s[i] = lgbm_m['q50'].predict(row)[0]
-        q10s[i] = lgbm_m['q10'].predict(row)[0]
-        q90s[i] = lgbm_m['q90'].predict(row)[0]
-        ext[SEED + i] = q50s[i]        # store Q50 for future lag lookups
-
-    return pd.DataFrame({'q10': q10s, 'q50': q50s, 'q90': q90s}, index=future_idx)
+    """Load pre-generated 5-year forecast from parquet (instant).
+    Regenerate with generate_forecast.py if models are retrained."""
+    return pd.read_parquet(FORECAST_PATH)
 
 # Metric helpers
 def pinball(y, yhat, q):
@@ -513,7 +420,7 @@ with tab4:
         "**Recursive forecasting:** LightGBM predicts one hour at a time — each Q50 output "
         "feeds back as the lag input for the next step. Seasonal patterns (hour-of-day, "
         "day-of-week, month, holidays) from 2005–2023 training data drive the projection. "
-        "The full 5-year window (43,800 steps) is computed once and cached."
+        "The full 5-year window (43,824 steps) is pre-generated and loads instantly."
     )
 
     # Date range state
@@ -552,7 +459,7 @@ with tab4:
         if f_end <= f_start:
             st.error("'To' date must be after 'From' date.")
         else:
-            with st.spinner("Computing 5-year recursive forecast (~43,800 steps). First run takes ~20s — cached instantly after..."):
+            with st.spinner("Loading forecast..."):
                 fcast = future_forecast_5yr()
 
             window = fcast.loc[str(f_start):str(f_end)]

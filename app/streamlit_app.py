@@ -165,6 +165,62 @@ def get_predictions():
         'lstm_q10': lstm_q10,  'lstm_q50': lstm_q50,  'lstm_q90': lstm_q90,
     }, index=test.index)
 
+# Recursive future forecasting
+def _build_future_row(ts, buf, feature_cols):
+    row = {
+        'hour':           ts.hour,
+        'dayofweek':      ts.dayofweek,
+        'month':          ts.month,
+        'quarter':        ts.quarter,
+        'dayofyear':      ts.dayofyear,
+        'weekofyear':     ts.isocalendar()[1],
+        'is_weekend':     int(ts.dayofweek in [5, 6]),
+        'is_holiday':     int(ts.normalize() in US_HOLIDAYS),
+        'hour_sin':       np.sin(2 * np.pi * ts.hour / 24),
+        'hour_cos':       np.cos(2 * np.pi * ts.hour / 24),
+        'month_sin':      np.sin(2 * np.pi * ts.month / 12),
+        'month_cos':      np.cos(2 * np.pi * ts.month / 12),
+        'dow_sin':        np.sin(2 * np.pi * ts.dayofweek / 7),
+        'dow_cos':        np.cos(2 * np.pi * ts.dayofweek / 7),
+        'lag_1h':         buf[-1],
+        'lag_24h':        buf[-24],
+        'lag_168h':       buf[-168],
+        'roll_mean_24h':  float(np.mean(buf[-24:])),
+        'roll_std_24h':   float(np.std(buf[-24:])),
+        'roll_mean_168h': float(np.mean(buf[-168:])),
+        'roll_std_168h':  float(np.std(buf[-168:])),
+    }
+    return [row[c] for c in feature_cols]
+
+@st.cache_data
+def future_forecast(year):
+    """Recursively predict hourly demand for the full target year using LightGBM.
+    Seeds from last 200 known hours; feeds Q50 back as lag for each subsequent step."""
+    df_full = load_data()
+    lgbm_m, _, _, _, feature_cols = load_models()
+
+    buf     = list(df_full['demand_mw'].values[-200:])
+    last_ts = df_full.index[-1]
+    future_idx = pd.date_range(
+        start=last_ts + pd.Timedelta(hours=1),
+        end=pd.Timestamp(f"{year}-12-31 23:00"),
+        freq='h'
+    )
+    if len(future_idx) == 0:
+        return pd.DataFrame(columns=['q10', 'q50', 'q90'])
+
+    q10s, q50s, q90s = [], [], []
+    for ts in future_idx:
+        X = np.array([_build_future_row(ts, buf, feature_cols)])
+        q10s.append(float(lgbm_m['q10'].predict(X)[0]))
+        q50s.append(float(lgbm_m['q50'].predict(X)[0]))
+        q90s.append(float(lgbm_m['q90'].predict(X)[0]))
+        buf.append(q50s[-1])
+        if len(buf) > 210:
+            buf = buf[-200:]
+
+    return pd.DataFrame({'q10': q10s, 'q50': q50s, 'q90': q90s}, index=future_idx)
+
 # Metric helpers
 def pinball(y, yhat, q):
     e = y - yhat
@@ -224,7 +280,7 @@ with st.spinner("Loading data and models..."):
     df      = load_data()
     pred_df = get_predictions()
 
-tab1, tab2, tab3 = st.tabs(["📈 Forecast", "🏆 Model Comparison", "🔍 EDA"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Forecast", "🏆 Model Comparison", "🔍 EDA", "🔮 Future Forecast"])
 
 # Tab 1: Forecast
 with tab1:
@@ -403,3 +459,69 @@ with tab3:
     k2.metric("Peak demand", f"{df['demand_mw'].max():,.0f} MW")
     k3.metric("Min demand",  f"{df['demand_mw'].min():,.0f} MW")
     k4.metric("Years of data", f"{df.index.year.nunique()}")
+
+# Tab 4: Future Forecast
+with tab4:
+    import calendar as cal_mod
+    MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+    st.subheader("Future Demand Forecast (2026+)")
+    st.info(
+        "**How it works:** LightGBM uses recursive (auto-regressive) prediction — each "
+        "hour's Q50 output is fed back as the lag input for the next step. "
+        "Seasonal patterns (hour-of-day, day-of-week, month, holidays) learned from "
+        "2005–2023 training data drive the forecast. Accuracy degrades with horizon distance."
+    )
+
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        f_year = st.selectbox("Year", [2026, 2027], key="f_year")
+    with col_f2:
+        f_month = st.selectbox(
+            "Month", range(1, 13), index=5, key="f_month",
+            format_func=lambda x: MONTH_NAMES[x - 1]
+        )
+
+    if st.button("▶ Run Forecast", type="primary", key="btn_future"):
+        with st.spinner(f"Computing full {f_year} recursive forecast (~8,760 steps, cached after first run)..."):
+            fcast = future_forecast(f_year)
+
+        start_str = f"{f_year}-{f_month:02d}-01"
+        last_day  = cal_mod.monthrange(f_year, f_month)[1]
+        end_str   = f"{f_year}-{f_month:02d}-{last_day}"
+        month_fc  = fcast.loc[start_str:end_str]
+
+        if month_fc.empty:
+            st.warning("No forecast data for the selected period.")
+        else:
+            fig_f = go.Figure()
+            fig_f.add_trace(go.Scatter(
+                x=month_fc.index, y=month_fc['q90'],
+                line=dict(width=0), showlegend=False, hoverinfo='skip'
+            ))
+            fig_f.add_trace(go.Scatter(
+                x=month_fc.index, y=month_fc['q10'],
+                fill='tonexty', fillcolor='rgba(137,180,250,0.15)',
+                line=dict(width=0), name='80% interval'
+            ))
+            fig_f.add_trace(go.Scatter(
+                x=month_fc.index, y=month_fc['q50'],
+                line=dict(color='rgb(137,180,250)', width=1.5), name='Q50 forecast'
+            ))
+            fig_f.update_layout(
+                title=f'LightGBM Recursive Forecast — {MONTH_NAMES[f_month - 1]} {f_year}',
+                xaxis_title='Date', yaxis_title='Demand (MW)',
+                height=420, template='plotly_dark', hovermode='x unified',
+                legend=dict(orientation='h', y=1.1)
+            )
+            st.plotly_chart(fig_f, use_container_width=True)
+
+            days_ahead = (month_fc.index[0] - df.index[-1]).days
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Peak Q50",  f"{month_fc['q50'].max():,.0f} MW")
+            c2.metric("Min Q50",   f"{month_fc['q50'].min():,.0f} MW")
+            c3.metric("Avg Interval Width", f"{(month_fc['q90'] - month_fc['q10']).mean():,.0f} MW")
+            st.caption(
+                f"Forecast horizon: ~{days_ahead} days beyond last known data (Dec 2025). "
+                "Intervals reflect seasonal uncertainty from training data, not accumulated prediction error."
+            )

@@ -1,0 +1,16 @@
+# Generated files — not for version control
+*.pptx
+*.ppt
+~$*
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

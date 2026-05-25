@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import joblib
 import holidays
+import requests
 from pathlib import Path
 
 # Page config
@@ -174,6 +175,34 @@ def future_forecast_5yr():
     Regenerate with generate_forecast.py if models are retrained."""
     return pd.read_parquet(FORECAST_PATH)
 
+@st.cache_data(ttl=86400 * 7)
+def get_weather_2023():
+    """Fetch 2023 hourly temperature for Washington DC from Open-Meteo (free, no key)."""
+    try:
+        r = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": 38.89,
+                "longitude": -77.04,
+                "start_date": "2023-01-01",
+                "end_date": "2023-12-31",
+                "hourly": "temperature_2m",
+                "timezone": "America/New_York",
+                "temperature_unit": "fahrenheit",
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        wx = pd.DataFrame(
+            {"temperature_f": data["hourly"]["temperature_2m"]},
+            index=pd.to_datetime(data["hourly"]["time"]),
+        )
+        wx.index.name = "Datetime"
+        return wx
+    except Exception:
+        return None
+
 # Metric helpers
 def pinball(y, yhat, q):
     e = y - yhat
@@ -233,7 +262,7 @@ with st.spinner("Loading data and models..."):
     df      = load_data()
     pred_df = get_predictions()
 
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Forecast", "🏆 Model Comparison", "🔍 EDA", "🔮 Future Forecast"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Forecast", "🏆 Model Comparison", "🔍 EDA", "🔮 Future Forecast", "ℹ️ About"])
 
 # Tab 1: Forecast
 with tab1:
@@ -413,6 +442,69 @@ with tab3:
     k3.metric("Min demand",  f"{df['demand_mw'].min():,.0f} MW")
     k4.metric("Years of data", f"{df.index.year.nunique()}")
 
+    # Weather-Demand Relationship
+    st.subheader("Weather & Demand Relationship (2023)")
+    with st.spinner("Fetching Washington DC weather data…"):
+        weather = get_weather_2023()
+
+    if weather is None:
+        st.info("Weather data temporarily unavailable — check internet connection.")
+    else:
+        df_2023 = df[df.index.year == 2023][["demand_mw"]].copy()
+        merged = df_2023.join(weather, how="inner").dropna()
+
+        if not merged.empty:
+            wcol1, wcol2 = st.columns(2)
+
+            with wcol1:
+                sample = merged.iloc[::3]
+                fig_sc = px.scatter(
+                    sample.reset_index(), x="temperature_f", y="demand_mw",
+                    title="Temperature vs Demand (2023, hourly)",
+                    labels={"temperature_f": "Temperature (°F)", "demand_mw": "Demand (MW)"},
+                    opacity=0.35, template="plotly_dark",
+                    color_discrete_sequence=["#89b4fa"],
+                )
+                fig_sc.update_layout(height=380)
+                st.plotly_chart(fig_sc, use_container_width=True)
+
+            with wcol2:
+                merged["month"] = merged.index.month
+                mw = merged.groupby("month").agg(
+                    demand_mw=("demand_mw", "mean"),
+                    temperature_f=("temperature_f", "mean"),
+                ).reset_index()
+                mw["month_name"] = mw["month"].apply(lambda x: month_names[x - 1])
+
+                fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_dual.add_trace(
+                    go.Bar(x=mw["month_name"], y=mw["demand_mw"],
+                           name="Avg Demand (MW)", marker_color="#89b4fa"),
+                    secondary_y=False,
+                )
+                fig_dual.add_trace(
+                    go.Scatter(x=mw["month_name"], y=mw["temperature_f"],
+                               name="Avg Temp (°F)",
+                               line=dict(color="#f38ba8", width=2),
+                               mode="lines+markers"),
+                    secondary_y=True,
+                )
+                fig_dual.update_layout(
+                    title="Monthly Demand vs Temperature (2023)",
+                    template="plotly_dark", height=380,
+                    legend=dict(orientation="h", y=1.12),
+                )
+                fig_dual.update_yaxes(title_text="Avg Demand (MW)", secondary_y=False)
+                fig_dual.update_yaxes(title_text="Avg Temp (°F)", secondary_y=True)
+                st.plotly_chart(fig_dual, use_container_width=True)
+
+            corr = merged["temperature_f"].corr(merged["demand_mw"])
+            st.caption(
+                f"Pearson correlation (temperature vs demand): **{corr:.3f}** — "
+                "the scatter shows a U-shaped relationship: both extreme cold and extreme heat "
+                "increase energy demand (heating vs cooling loads)."
+            )
+
 # Tab 4: Future Forecast
 with tab4:
     st.subheader("Future Demand Forecast — 2026 to 2030")
@@ -510,3 +602,85 @@ with tab4:
                     f"Intervals reflect seasonal uncertainty patterns — not accumulated prediction error. "
                     f"{'Chart resampled to daily average for readability.' if n_days > 60 else 'Showing hourly resolution.'}"
                 )
+
+# Tab 5: About
+with tab5:
+    st.subheader("About This Project")
+
+    st.markdown("""
+This app demonstrates **probabilistic energy demand forecasting** for the Dominion (DOM)
+utility region — Virginia, Washington DC, and surrounding areas. It was built as part of
+a machine learning course project to explore how gradient boosting and deep learning models
+can produce calibrated prediction intervals, not just point estimates.
+""")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("### Dataset")
+        st.markdown("""
+- **Source:** PJM Interconnection (regional grid operator)
+- **Region:** Dominion (DOM) — Virginia / Washington DC
+- **Coverage:** 2005 – 2025 (20 years, ~175,000 hourly observations)
+- **Train / Test split:** 2005–2024 train · 2025 test
+- **Features:** Hour-of-day, day-of-week, month, holidays, lag values (1h / 24h / 168h), rolling statistics
+
+Virginia/DC is the **world's largest data center hub** — Loudoun County alone
+hosts ~70% of global internet traffic. That rising baseload is clearly visible
+as a +45% surge in average demand between 2020 and 2025.
+""")
+
+        st.markdown("### Forecasting Approach")
+        st.markdown("""
+All three models output **three quantiles simultaneously** (Q10 / Q50 / Q90),
+trained with **pinball loss**, giving an 80% prediction interval.
+
+| Model | Approach |
+|---|---|
+| **LightGBM** | Gradient-boosted trees, quantile regression |
+| **XGBoost** | Gradient-boosted trees (baseline comparison) |
+| **LSTM** | Sequence model with 168-hour sliding window |
+
+The **Future Forecast** tab uses recursive LightGBM: each predicted Q50 value
+feeds back as the lag input for the next hour, rolling 5 years into the future.
+""")
+
+    with col_b:
+        st.markdown("### Model Performance (2025 Test Set)")
+
+        perf = {
+            "Model":         ["XGBoost", "LightGBM", "LSTM"],
+            "MAE (MW)":      [224.3, 230.5, 171.6],
+            "Avg Pinball":   [73.0,  73.7,  58.8],
+            "Coverage %":    [79.6,  78.9,  93.8],
+            "Interval (MW)": [687.0, 697.5, 822.4],
+        }
+        perf_df = pd.DataFrame(perf).set_index("Model")
+        st.dataframe(
+            perf_df.style
+                .highlight_min(axis=0, subset=["MAE (MW)", "Avg Pinball"], color="#a6e3a1")
+                .highlight_max(axis=0, subset=["Coverage %"], color="#a6e3a1"),
+            use_container_width=True,
+        )
+        st.caption("LSTM achieves lowest MAE and pinball loss. Wider interval reflects greater uncertainty capture.")
+
+        st.markdown("### Key Findings")
+        st.markdown("""
+- **Dual demand peaks** each day: morning ramp (7–9 AM) and evening peak (6–8 PM)
+- **Summer > Winter** baseline, driven by air conditioning in the mid-Atlantic climate
+- **Data center signature:** near-flat load factor — demand never drops below ~9,000 MW
+  even at 3 AM on weekends (24/7 compute loads)
+- **Rising trend:** average demand grew ~45% from 2020 to 2025, far exceeding
+  the national grid average — a direct fingerprint of hyperscale data center expansion
+- **Weather sensitivity:** U-shaped relationship — both extreme cold and extreme heat
+  drive demand spikes (heating vs cooling loads)
+""")
+
+        st.markdown("### Tech Stack")
+        st.markdown("""
+`Python` · `LightGBM` · `XGBoost` · `PyTorch` · `Streamlit` · `Plotly` · `pandas` · `scikit-learn`
+Weather data: [Open-Meteo](https://open-meteo.com/) free archive API (no key required)
+""")
+
+    st.divider()
+    st.caption("Built by Dawit Adane · ML-1 Course Project · DOM energy demand forecasting · 2026")

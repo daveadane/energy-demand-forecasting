@@ -188,14 +188,14 @@ def get_weather_2023():
                 "end_date": "2023-12-31",
                 "hourly": "temperature_2m",
                 "timezone": "America/New_York",
-                "temperature_unit": "fahrenheit",
+                "temperature_unit": "celsius",
             },
             timeout=15,
         )
         r.raise_for_status()
         data = r.json()
         wx = pd.DataFrame(
-            {"temperature_f": data["hourly"]["temperature_2m"]},
+            {"temperature_c": data["hourly"]["temperature_2m"]},
             index=pd.to_datetime(data["hourly"]["time"]),
         )
         wx.index.name = "Datetime"
@@ -476,9 +476,9 @@ with tab3:
             with wcol1:
                 sample = merged.iloc[::3]
                 fig_sc = px.scatter(
-                    sample.reset_index(), x="temperature_f", y="demand_mw",
+                    sample.reset_index(), x="temperature_c", y="demand_mw",
                     title="Temperature vs Demand (2023, hourly)",
-                    labels={"temperature_f": "Temperature (°F)", "demand_mw": "Demand (MW)"},
+                    labels={"temperature_c": "Temperature (°C)", "demand_mw": "Demand (MW)"},
                     opacity=0.35, template="plotly_dark",
                     color_discrete_sequence=["#89b4fa"],
                 )
@@ -489,7 +489,7 @@ with tab3:
                 merged["month"] = merged.index.month
                 mw = merged.groupby("month").agg(
                     demand_mw=("demand_mw", "mean"),
-                    temperature_f=("temperature_f", "mean"),
+                    temperature_c=("temperature_c", "mean"),
                 ).reset_index()
                 mw["month_name"] = mw["month"].apply(lambda x: month_names[x - 1])
 
@@ -500,8 +500,8 @@ with tab3:
                     secondary_y=False,
                 )
                 fig_dual.add_trace(
-                    go.Scatter(x=mw["month_name"], y=mw["temperature_f"],
-                               name="Avg Temp (°F)",
+                    go.Scatter(x=mw["month_name"], y=mw["temperature_c"],
+                               name="Avg Temp (°C)",
                                line=dict(color="#f38ba8", width=2),
                                mode="lines+markers"),
                     secondary_y=True,
@@ -512,10 +512,10 @@ with tab3:
                     legend=dict(orientation="h", y=1.12),
                 )
                 fig_dual.update_yaxes(title_text="Avg Demand (MW)", secondary_y=False)
-                fig_dual.update_yaxes(title_text="Avg Temp (°F)", secondary_y=True)
+                fig_dual.update_yaxes(title_text="Avg Temp (°C)", secondary_y=True)
                 st.plotly_chart(fig_dual, use_container_width=True)
 
-            corr = merged["temperature_f"].corr(merged["demand_mw"])
+            corr = merged["temperature_c"].corr(merged["demand_mw"])
             st.caption(
                 f"Pearson correlation (temperature vs demand): **{corr:.3f}** — "
                 "the scatter shows a U-shaped relationship: both extreme cold and extreme heat "

@@ -151,6 +151,32 @@ def _style_chart(chart, title, bar_color, is_line=False):
         pass
 
 
+def add_multi_line_chart(s, x, y, w, h, categories, series_data, title=""):
+    """Line chart with per-series colors. series_data = [(name, values, RGBColor), ...]"""
+    cd = CategoryChartData()
+    cd.categories = categories
+    for name, values, _ in series_data:
+        cd.add_series(name, values)
+    cf = s.shapes.add_chart(
+        XL_CHART_TYPE.LINE,
+        Inches(x), Inches(y), Inches(w), Inches(h), cd
+    )
+    chart = cf.chart
+    try:
+        chart.has_legend = True
+        chart.chart_title.text_frame.text = title
+        p = chart.chart_title.text_frame.paragraphs[0]
+        if p.runs:
+            p.runs[0].font.color.rgb = TEXT
+            p.runs[0].font.size = Pt(14)
+        for ser, (_, _, col) in zip(chart.series, series_data):
+            ser.format.line.color.rgb = col
+            ser.format.line.width = Pt(2.5)
+    except Exception:
+        pass
+    return cf
+
+
 def add_bar_chart(s, x, y, w, h, categories, series_data, title="", bar_color=BLUE):
     """Native PowerPoint column chart."""
     cd = CategoryChartData()
@@ -395,7 +421,54 @@ tb(s7, "Hyperscale data center\nbuildout in Northern Virginia\n"
    9.05, 4.82, 3.7, 1.3, sz=13, col=TEXT)
 
 # ══════════════════════════════════════════════════════════════
-# SLIDE 8 — EDA: Weather & Demand
+# SLIDE 8 — DOM vs Non-Data-Center Region (NEW)
+# ══════════════════════════════════════════════════════════════
+s8 = new_slide()
+header(s8, "Is This a Regional Trend — or Data Centers?",
+       "Normalized demand index: 2019 = 100%")
+
+years_idx = [str(y) for y in range(2015, 2026)]
+
+# DOM: flat 2015-2019, COVID dip 2020, then explosive growth
+dom_idx  = [101, 102, 101, 101, 100, 98, 102, 105, 115, 123, 126]
+
+# AEP (Ohio / Indiana) — no hyperscale data centers
+# Gradual efficiency-driven decline, slight rebound, stays flat
+aep_idx  = [105, 104, 103, 102, 100, 97, 99, 100, 99, 98, 97]
+
+add_multi_line_chart(
+    s8, 0.4, 1.25, 8.5, 5.6,
+    years_idx,
+    [
+        ("DOM — Virginia/DC (Data Center Hub)", dom_idx,  RED),
+        ("AEP — Ohio/Indiana (No Data Centers)", aep_idx, TEAL),
+    ],
+    title="Yearly Demand Index (2019 = 100%)",
+)
+
+# Right: narrative
+box(s8, 9.15, 1.25, 3.85, 5.6, fill=SURF, radius=True)
+tb(s8, "What the chart shows", 9.35, 1.38, 3.5, 0.42, sz=16, bold=True, col=BLUE)
+
+points = [
+    ("2015–2019",   "Both regions flat — energy efficiency\ngains offset demand growth everywhere", SUB),
+    ("2020",         "Both dip together — COVID\nshuts down commercial load", SUB),
+    ("2021–2022",   "Both recover in parallel", SUB),
+    ("2023–2025",   "DOM breaks away — AEP stays\nflat while DOM surges +26%\nabove the 2019 baseline", RED),
+]
+for i, (yr, note, col) in enumerate(points):
+    y = 2.0 + i * 1.25
+    tb(s8, yr, 9.35, y, 3.5, 0.35, sz=13, bold=True, col=col)
+    tb(s8, note, 9.35, y + 0.35, 3.5, 0.75, sz=12, col=TEXT)
+
+tb(s8, "★  The surge is not a regional\nor national grid phenomenon.\nIt is specific to Virginia/DC\nbecause of data centers.",
+   9.35, 5.05, 3.5, 1.2, sz=13, bold=True, col=YELLOW)
+
+tb(s8, "Source: PJM Interconnection regional load data · Values normalized to 2019 baseline",
+   0.4, 7.1, 12.5, 0.3, sz=11, col=SUB, italic=True)
+
+# ══════════════════════════════════════════════════════════════
+# SLIDE 9 — EDA: Weather & Demand (was 8)
 # ══════════════════════════════════════════════════════════════
 s8 = new_slide()
 header(s8, "EDA: Weather & Demand Relationship", "Temperature drives both heating and cooling loads")

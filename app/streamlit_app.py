@@ -270,7 +270,7 @@ with tab1:
 
     with col_ctrl:
         st.subheader("Settings")
-        model_choice = st.selectbox("Model", ["LightGBM", "LSTM", "XGBoost", "All"])
+        model_choice = st.selectbox("Model", ["LightGBM", "LSTM", "Both"])
 
         # Initialize defaults
         if 'sel_start' not in st.session_state:
@@ -304,43 +304,21 @@ with tab1:
         e = str(end_date)
         slice_df = pred_df.loc[s:e]
 
-        if model_choice in ("LightGBM", "All"):
+        if model_choice in ("LightGBM", "Both"):
             st.plotly_chart(
                 forecast_chart(slice_df, 'lgbm', '137,180,250',
                                f'LightGBM — {s} to {e}'),
                 use_container_width=True
             )
-        if model_choice in ("LSTM", "All"):
+        if model_choice in ("LSTM", "Both"):
             st.plotly_chart(
                 forecast_chart(slice_df, 'lstm', '166,227,161',
                                f'LSTM — {s} to {e}'),
                 use_container_width=True
             )
-        if model_choice in ("XGBoost", "All"):
-            if (MODELS_DIR / 'xgb_q50.pkl').exists():
-                _, _, _, _, feature_cols = load_models()
-                xgb_q10m = joblib.load(MODELS_DIR / 'xgb_q10.pkl')
-                xgb_q50m = joblib.load(MODELS_DIR / 'xgb_q50.pkl')
-                xgb_q90m = joblib.load(MODELS_DIR / 'xgb_q90.pkl')
-                xtest = load_data().loc[s:e, feature_cols]
-                xgb_df = slice_df[['actual']].copy()
-                xgb_df['xgb_q10'] = xgb_q10m.predict(xtest)
-                xgb_df['xgb_q50'] = xgb_q50m.predict(xtest)
-                xgb_df['xgb_q90'] = xgb_q90m.predict(xtest)
-                st.plotly_chart(
-                    forecast_chart(xgb_df, 'xgb', '203,166,247',
-                                   f'XGBoost — {s} to {e}'),
-                    use_container_width=True
-                )
-            else:
-                st.info(
-                    "XGBoost model files not found. "
-                    "Export `xgb_q10.pkl`, `xgb_q50.pkl`, `xgb_q90.pkl` from Colab "
-                    "and place them in the `models/` directory to enable this chart."
-                )
 
         st.subheader("Metrics for selected period")
-        prefix = 'lgbm' if model_choice not in ('LSTM',) else 'lstm'
+        prefix = 'lgbm' if model_choice != 'LSTM' else 'lstm'
         m = compute_metrics(slice_df, prefix)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("MAE", f"{m['MAE (MW)']:,.0f} MW")

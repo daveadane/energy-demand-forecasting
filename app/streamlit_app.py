@@ -456,8 +456,8 @@ with tab3:
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total observations", f"{len(df):,}")
     k2.metric("Peak demand", f"{df['demand_mw'].max():,.0f} MW")
-    k3.metric("Min demand",  f"{df['demand_mw'].min():,.0f} MW")
-    k4.metric("Years of data", f"{df.index.year.nunique()}")
+    k3.metric("Min demand",  f"{df[df['demand_mw'] > 3000]['demand_mw'].min():,.0f} MW")
+    k4.metric("Date range", f"{df.index.year.min()} – {df.index.year.max()}")
 
     # Weather-Demand Relationship
     st.subheader("Weather & Demand Relationship (2023)")
@@ -638,7 +638,7 @@ can produce calibrated prediction intervals, not just point estimates.
         st.markdown("""
 - **Source:** PJM Interconnection (regional grid operator)
 - **Region:** Dominion (DOM) — Virginia / Washington DC
-- **Coverage:** 2005 – 2025 (20 years, ~175,000 hourly observations)
+- **Coverage:** 2005 – 2025 (21 years, ~181,000 hourly observations)
 - **Train / Test split:** 2005–2024 train · 2025 test
 - **Features:** Hour-of-day, day-of-week, month, holidays, lag values (1h / 24h / 168h), rolling statistics
 

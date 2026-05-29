@@ -586,12 +586,13 @@ with tab4:
                 )
                 st.plotly_chart(fig_f, use_container_width=True)
 
-                days_ahead = (window.index[0] - df.index[-1]).days
+                window_days = (f_end - f_start).days
+                days_ahead  = (window.index[0] - df.index[-1]).days
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Peak Q50",   f"{window['q50'].max():,.0f} MW")
-                c2.metric("Min Q50",    f"{window['q50'].min():,.0f} MW")
-                c3.metric("Avg Width",  f"{(window['q90'] - window['q10']).mean():,.0f} MW")
-                c4.metric("Horizon",    f"{days_ahead} days")
+                c1.metric("Peak Q50",      f"{window['q50'].max():,.0f} MW")
+                c2.metric("Min Q50",       f"{window['q50'].min():,.0f} MW")
+                c3.metric("Avg Width",     f"{(window['q90'] - window['q10']).mean():,.0f} MW")
+                c4.metric("Selected period", f"{window_days} days")
                 st.caption(
                     f"Seeded from last known data (Dec 2025). "
                     f"Intervals reflect seasonal uncertainty patterns — not accumulated prediction error. "
